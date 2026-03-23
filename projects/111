@@ -1,0 +1,41 @@
+在其他环境中使用项目
+步骤 1：下载压缩包
+你可以从沙箱环境下载 project_clean.tar.gz 文件
+步骤 2：解压并安装依赖
+# 解压
+tar -xzvf project_clean.tar.gz -C my-restaurant-app
+
+# 进入项目目录
+cd my-restaurant-app
+
+# 安装依赖 (必须使用 pnpm)
+pnpm install
+
+# 启动开发服务器
+pnpm dev
+步骤 3：配置环境变量
+创建 .env.local 文件：
+# Supabase 数据库配置
+SUPABASE_URL=你的supabase项目URL
+SUPABASE_ANON_KEY=你的supabase匿名密钥
+
+# JWT密钥
+JWT_SECRET=你的JWT密钥
+
+# 智谱AI配置（用于语义搜索）
+ZHIPUAI_API_KEY=你的智谱AI密钥
+项目结构
+├── src/
+│   ├── app/           # 页面和API路由
+│   │   ├── page.tsx   # 主页面（用户端+商家端）
+│   │   └── api/       # 后端API
+│   ├── components/    # UI组件
+│   ├── lib/           # 工具函数
+│   └── storage/       # 数据库配置
+├── package.json       # 依赖配置
+└── .coze              # 部署配置
+技术栈
+前端: Next.js 16 + React 19 + TypeScript
+UI: shadcn/ui + Tailwind CSS
+数据库: Supabase (PostgreSQL)
+智能推荐: 智谱 AI Embedding API
