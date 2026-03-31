@@ -98,7 +98,7 @@ src/
 1. **克隆项目**
    ```bash
    git clone <repository-url>
-   cd cloud-ordering-system
+   cd projects
    ```
 
 2. **安装依赖**
@@ -114,8 +114,8 @@ src/
    COZE_SUPABASE_ANON_KEY=<your-supabase-anon-key>
    
    # 智谱AI配置
-
-  
+   ZHIPU_API_KEY=<your-zhipu-api-key>
+   ```
 
 4. **初始化数据库**
    运行初始化API：
@@ -135,7 +135,7 @@ src/
 6. **访问项目**
    打开浏览器访问：`http://localhost:3000`
 
-## � 核心实现
+## 🎯 核心实现
 
 ### 1. 智能推荐系统
 
@@ -208,6 +208,64 @@ export function getSupabaseClient() {
     process.env.COZE_SUPABASE_ANON_KEY!
   );
 }
+```
+
+### 4. 错误处理与性能优化
+
+**实现原理**：
+- 使用AbortController处理组件卸载时的API请求
+- 优化前端渲染性能
+- 确保分类图标正确显示
+
+**关键代码**：
+```typescript
+// src/app/page.tsx - 错误处理示例
+const checkAuth = async (signal?: AbortSignal) => {
+  try {
+    // 检查信号是否已经被中止
+    if (signal?.aborted) {
+      return;
+    }
+    
+    // API请求...
+  } catch (error) {
+    // 未登录或请求被取消
+  }
+};
+
+// 优化分类图标显示
+const fetchDishes = async (signal?: AbortSignal) => {
+  // ...
+  if (data.success) {
+    // 定义分类图标映射
+    const categoryIcons: Record<number, string> = {
+      1: '🔥', // 热菜
+      2: '🥗', // 凉菜
+      3: '🍲', // 汤品
+      4: '🍚', // 主食
+      5: '🍢', // 小吃
+      6: '🥤', // 饮料
+      7: '🍎'  // 水果
+    };
+    
+    // 为每个菜品添加正确的分类图标
+    const dishesWithCorrectIcons = (data.data || []).map((dish: any) => {
+      if (dish.categories) {
+        return {
+          ...dish,
+          categories: {
+            ...dish.categories,
+            icon: categoryIcons[dish.categories.id] || dish.categories.icon || '🍽️'
+          }
+        };
+      }
+      return dish;
+    });
+    
+    setDishes(dishesWithCorrectIcons);
+  }
+  // ...
+};
 ```
 
 ## ⚠️ 注意事项
@@ -347,7 +405,7 @@ export function getSupabaseClient() {
 - **GCP**：部署到App Engine
 - **Azure**：部署到App Service
 
-## � 数据结构
+## 📊 数据结构
 
 ### 主要数据表
 
@@ -365,27 +423,52 @@ export function getSupabaseClient() {
    - id: 分类ID
    - name: 分类名称
    - icon: 分类图标
+   - sort_order: 排序顺序
 
 3. **orders** - 订单表
    - id: 订单ID
+   - order_no: 订单编号
    - user_id: 用户ID
+   - merchant_id: 商家ID
    - total_price: 总价格
    - status: 订单状态
+   - order_type: 订单类型（dine_in, takeaway, delivery）
+   - payment_method: 支付方式
    - created_at: 创建时间
 
 4. **order_items** - 订单详情表
    - id: 详情ID
    - order_id: 订单ID
    - dish_id: 菜品ID
-   - quantity: 数量
+   - dish_name: 菜品名称
    - price: 单价
+   - quantity: 数量
+   - subtotal: 小计
 
 5. **users** - 用户表
    - id: 用户ID
-   - name: 用户名
-   - email: 邮箱
+   - username: 用户名
    - password: 密码
-   - role: 角色
+   - email: 邮箱
+   - phone: 电话
+   - avatar: 头像
+   - real_name: 真实姓名
+   - address: 地址
+   - is_active: 是否激活
+
+6. **merchants** - 商家表
+   - id: 商家ID
+   - username: 用户名
+   - password: 密码
+   - shop_name: 店铺名称
+   - email: 邮箱
+   - phone: 电话
+   - address: 地址
+   - logo: 店铺logo
+   - description: 店铺描述
+   - rating: 评分
+   - total_sales: 总销售额
+   - is_active: 是否激活
 
 ## 🎯 技术亮点
 
@@ -395,6 +478,10 @@ export function getSupabaseClient() {
 4. **完整的前后端架构**：一体化开发模式
 5. **性能优化**：服务端渲染、代码分割、缓存策略
 6. **安全性**：JWT认证、数据加密、输入验证
+7. **错误处理**：AbortController机制处理组件卸载时的API请求
+8. **UI优化**：确保分类图标正确显示，提升用户体验
+9. **数据管理**：完善的数据库结构和数据初始化流程
+10. **可维护性**：清晰的代码结构和详细的文档
 
 ## 📈 未来规划
 
