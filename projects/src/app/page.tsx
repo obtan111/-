@@ -71,16 +71,15 @@ function MerchantDishesList({
   setShowEditDishModal: (show: boolean) => void;
   toggleDishStatus: (id: number, active: boolean) => void;
 }) {
-  // 8个主要分类
+  // 7个主要分类
   const mainCategories = [
     { id: 1, name: '热菜', icon: '🔥' },
     { id: 2, name: '凉菜', icon: '🥗' },
     { id: 3, name: '汤品', icon: '🍲' },
     { id: 4, name: '主食', icon: '🍚' },
     { id: 5, name: '小吃', icon: '🍢' },
-    { id: 6, name: '甜品', icon: '🍰' },
-    { id: 7, name: '饮料', icon: '🥤' },
-    { id: 8, name: '水果', icon: '🍎' }
+    { id: 6, name: '饮料', icon: '🥤' },
+    { id: 7, name: '水果', icon: '🍎' }
   ];
   
   // 按分类分组菜品
@@ -99,22 +98,30 @@ function MerchantDishesList({
   
   // 将菜品分配到对应的主要分类
   filteredDishes.forEach(dish => {
-    // 找到对应的主要分类
-    const dishCategoryName = dish.categories?.name || '';
-    const matchingCategory = mainCategories.find(cat => 
-      cat.name === dishCategoryName ||
-      (dishCategoryName.includes('热') && cat.name === '热菜') ||
-      (dishCategoryName.includes('凉') && cat.name === '凉菜') ||
-      (dishCategoryName.includes('汤') && cat.name === '汤品') ||
-      (dishCategoryName.includes('主') && cat.name === '主食') ||
-      (dishCategoryName.includes('小') && cat.name === '小吃') ||
-      (dishCategoryName.includes('甜') && cat.name === '甜品') ||
-      (dishCategoryName.includes('饮') && cat.name === '饮料') ||
-      (dishCategoryName.includes('水') && cat.name === '水果')
-    );
-    
-    if (matchingCategory) {
-      groupedDishes[matchingCategory.id].dishes.push(dish);
+    // 直接使用菜品的category_id来确定分类
+    const categoryId = dish.category_id;
+    if (categoryId && groupedDishes[categoryId]) {
+      groupedDishes[categoryId].dishes.push(dish);
+    } else if (categoryId) {
+      // 找到对应的主要分类
+      const dishCategoryName = dish.categories?.name || '';
+      const matchingCategory = mainCategories.find(cat => 
+        cat.name === dishCategoryName ||
+        (dishCategoryName.includes('热') && cat.name === '热菜') ||
+        (dishCategoryName.includes('凉') && cat.name === '凉菜') ||
+        (dishCategoryName.includes('汤') && cat.name === '汤品') ||
+        (dishCategoryName.includes('主') && cat.name === '主食') ||
+        (dishCategoryName.includes('小') && cat.name === '小吃') ||
+        (dishCategoryName.includes('饮') && cat.name === '饮料') ||
+        (dishCategoryName.includes('水') && cat.name === '水果')
+      );
+      
+      if (matchingCategory) {
+        groupedDishes[matchingCategory.id].dishes.push(dish);
+      } else {
+        // 默认放入热菜分类
+        groupedDishes[1].dishes.push(dish);
+      }
     } else {
       // 默认放入热菜分类
       groupedDishes[1].dishes.push(dish);
@@ -303,10 +310,18 @@ export default function Home() {
 
   // 初始化数据
   useEffect(() => {
-    fetchCategories();
-    fetchDishes();
-    // 不再自动登录，用户需要手动登录
-    fetchRecommendations('hot'); // 初始加载热门菜品
+    const controller = new AbortController();
+    const signal = controller.signal;
+    
+    fetchCategories(signal);
+    fetchDishes(signal);
+    checkAuth(signal); // 检查认证状态，传入信号
+    fetchRecommendations('hot', undefined, signal); // 初始加载热门菜品
+    
+    // 组件卸载时取消请求
+    return () => {
+      controller.abort();
+    };
   }, []);
   
   // 当用户状态或订单状态变化时，更新推荐类型（但不自动获取推荐）
@@ -334,9 +349,14 @@ export default function Home() {
   }, [selectedCategory]);
 
   // 获取推荐（根据用户状态显示不同类型的推荐）
-  const fetchRecommendations = async (type?: 'hot' | 'personalized' | 'related' | 'cart', excludeDishIds?: number[]) => {
+  const fetchRecommendations = async (type?: 'hot' | 'personalized' | 'related' | 'cart', excludeDishIds?: number[], signal?: AbortSignal) => {
     const recommendTypeToUse = type || recommendType;
     try {
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
       let url = '/api/recommend?';
       
       // 根据推荐类型选择不同的推荐策略
@@ -358,13 +378,24 @@ export default function Home() {
         url += `&exclude_ids=${idsToExclude.join(',')}`;
       }
       
-      const res = await fetch(url);
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      const res = await fetch(url, { signal });
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
       const data = await res.json();
       if (data.success) {
         setRecommendations(data.data || []);
       }
     } catch (error) {
-      console.error('获取推荐失败:', error);
+      // 请求被取消
     }
   };
   
@@ -385,26 +416,77 @@ export default function Home() {
   };
 
   // 检查认证状态
-  const checkAuth = async () => {
+  const checkAuth = async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/user/profile');
-      if (res.ok) {
-        const data = await res.json();
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      // 先检查用户认证状态
+      const userRes = await fetch('/api/user/profile', { signal });
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      if (userRes.ok) {
+        const data = await userRes.json();
         setUser(data.data);
         setUserRole('user');
-        fetchCart();
-        fetchOrders();
-        fetchRecommendations(); // 登录后重新获取推荐
+        fetchCart(signal);
+        fetchOrders(signal);
+        fetchRecommendations(undefined, undefined, signal); // 登录后重新获取推荐
+        return;
+      }
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      // 再检查商家认证状态
+      const merchantRes = await fetch('/api/merchant/profile', { signal });
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      if (merchantRes.ok) {
+        const data = await merchantRes.json();
+        setUser(data.data);
+        setUserRole('merchant');
+        // 商家登录后默认显示菜单管理
+        setActiveTab('dishes');
+        // 获取商家菜品
+        fetchMerchantDishes(1);
+        // 获取商家订单
+        fetchMerchantOrders();
+        // 获取商家统计
+        fetchMerchantStats();
       }
     } catch (error) {
-      // 未登录
+      // 未登录或请求被取消
     }
   };
 
   // 获取分类（去重并限制为8个主要分类）
-  const fetchCategories = async () => {
+  const fetchCategories = async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/categories');
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      const res = await fetch('/api/categories', { signal });
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
       const data = await res.json();
       if (data.success) {
         // 定义8个主要分类
@@ -414,33 +496,73 @@ export default function Home() {
           { id: 3, name: '汤品', icon: '🍲' },
           { id: 4, name: '主食', icon: '🍚' },
           { id: 5, name: '小吃', icon: '🍢' },
-          { id: 6, name: '甜品', icon: '🍰' },
-          { id: 7, name: '饮料', icon: '🥤' },
-          { id: 8, name: '水果', icon: '🍎' }
+          { id: 6, name: '饮料', icon: '🥤' },
+          { id: 7, name: '水果', icon: '🍎' }
         ];
         setCategories(mainCategories);
       }
     } catch (error) {
-      console.error('获取分类失败:', error);
+      // 请求被取消
     }
   };
 
   // 获取菜品
-  const fetchDishes = async () => {
+  const fetchDishes = async (signal?: AbortSignal) => {
     setLoading(true);
     try {
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
       const params = new URLSearchParams();
       if (selectedCategory) params.append('category_id', selectedCategory.toString());
       if (searchQuery) params.append('keyword', searchQuery);
       params.append('limit', '50');
 
-      const res = await fetch(`/api/dishes?${params}`);
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      const res = await fetch(`/api/dishes?${params}`, { signal });
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
       const data = await res.json();
       if (data.success) {
-        setDishes(data.data || []);
+        // 定义分类图标映射
+        const categoryIcons: Record<number, string> = {
+          1: '🔥', // 热菜
+          2: '🥗', // 凉菜
+          3: '🍲', // 汤品
+          4: '🍚', // 主食
+          5: '🍢', // 小吃
+          6: '🥤', // 饮料
+          7: '🍎'  // 水果
+        };
+        
+        // 为每个菜品添加正确的分类图标
+        const dishesWithCorrectIcons = (data.data || []).map((dish: any) => {
+          if (dish.categories) {
+            return {
+              ...dish,
+              categories: {
+                ...dish.categories,
+                icon: categoryIcons[dish.categories.id] || dish.categories.icon || '🍽️'
+              }
+            };
+          }
+          return dish;
+        });
+        
+        setDishes(dishesWithCorrectIcons);
       }
     } catch (error) {
-      console.error('获取菜品失败:', error);
+      // 请求被取消
     } finally {
       setLoading(false);
     }
@@ -490,28 +612,50 @@ export default function Home() {
   };
 
   // 获取购物车
-  const fetchCart = async () => {
+  const fetchCart = async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/cart');
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      const res = await fetch('/api/cart', { signal });
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
       const data = await res.json();
       if (data.success) {
         setCart(data.data);
       }
     } catch (error) {
-      console.error('获取购物车失败:', error);
+      // 请求被取消
     }
   };
 
   // 获取订单
-  const fetchOrders = async () => {
+  const fetchOrders = async (signal?: AbortSignal) => {
     try {
-      const res = await fetch('/api/orders');
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
+      const res = await fetch('/api/orders', { signal });
+      
+      // 检查信号是否已经被中止
+      if (signal?.aborted) {
+        return;
+      }
+      
       const data = await res.json();
       if (data.success) {
         setOrders(data.data || []);
       }
     } catch (error) {
-      console.error('获取订单失败:', error);
+      // 请求被取消
     }
   };
 
@@ -1844,6 +1988,32 @@ export default function Home() {
                 </Button>
               )}
               
+              {/* 数据初始化按钮 */}
+              <Button 
+                variant="outline" 
+                size="sm"
+                className="text-blue-600 border-blue-300"
+                onClick={async () => {
+                  if (confirm('确定要重新初始化数据吗？这将清空现有菜品和订单数据并导入新的测试数据。')) {
+                    try {
+                      const res = await fetch('/api/init', { method: 'POST' });
+                      const data = await res.json();
+                      if (data.success) {
+                        toast.success('数据初始化成功！请刷新页面查看新数据。');
+                        console.log('初始化结果:', data.data);
+                      } else {
+                        toast.error(data.error || '初始化失败');
+                      }
+                    } catch (error) {
+                      toast.error('初始化请求失败');
+                    }
+                  }
+                }}
+              >
+                <RefreshCw className="h-4 w-4 mr-2" />
+                初始化数据
+              </Button>
+              
               <div className="flex items-center gap-2">
                 <Button 
                   variant={activeTab === 'dishes' ? 'default' : 'ghost'} 
@@ -2542,8 +2712,8 @@ export default function Home() {
               >
                 全部
               </Button>
-              {/* 只显示前6个分类 */}
-              {categories.slice(0, 6).map((cat) => (
+              {/* 显示所有分类 */}
+              {categories.map((cat) => (
                 <Button
                   key={cat.id}
                   variant={selectedCategory === cat.id ? 'default' : 'outline'}
@@ -2553,21 +2723,6 @@ export default function Home() {
                   {cat.icon} {cat.name}
                 </Button>
               ))}
-              {/* 其他分类下拉菜单 */}
-              {categories.length > 6 && (
-                <select
-                  className="px-3 py-1.5 text-sm border rounded-md bg-white"
-                  value={selectedCategory || ''}
-                  onChange={(e) => setSelectedCategory(e.target.value ? Number(e.target.value) : null)}
-                >
-                  <option value="">更多分类</option>
-                  {categories.slice(6).map((cat) => (
-                    <option key={cat.id} value={cat.id}>
-                      {cat.icon} {cat.name}
-                    </option>
-                  ))}
-                </select>
-              )}
             </div>
           </div>
         </div>

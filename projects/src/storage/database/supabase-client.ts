@@ -1,5 +1,6 @@
 import { createClient, SupabaseClient } from '@supabase/supabase-js';
 import { execSync } from 'child_process';
+import dotenv from 'dotenv';
 
 let envLoaded = false;
 
@@ -15,7 +16,7 @@ function loadEnv(): void {
 
   try {
     try {
-      require('dotenv').config();
+      dotenv.config();
       if (process.env.COZE_SUPABASE_URL && process.env.COZE_SUPABASE_ANON_KEY) {
         envLoaded = true;
         return;
@@ -90,6 +91,16 @@ function getSupabaseClient(token?: string): SupabaseClient {
     return createClient(url, anonKey, {
       global: {
         headers: { Authorization: `Bearer ${token}` },
+        fetch: (url, options) => {
+          // 禁用缓存
+          if (!options) options = {};
+          if (!options.headers) options.headers = {};
+          const headers = options.headers as Record<string, string>;
+          headers['Cache-Control'] = 'no-cache';
+          headers['Pragma'] = 'no-cache';
+          headers['Expires'] = '0';
+          return fetch(url, options);
+        },
       },
       db: {
         timeout: 60000,
@@ -108,6 +119,18 @@ function getSupabaseClient(token?: string): SupabaseClient {
     auth: {
       autoRefreshToken: false,
       persistSession: false,
+    },
+    global: {
+      fetch: (url, options) => {
+        // 禁用缓存
+        if (!options) options = {};
+        if (!options.headers) options.headers = {};
+        const headers = options.headers as Record<string, string>;
+        headers['Cache-Control'] = 'no-cache';
+        headers['Pragma'] = 'no-cache';
+        headers['Expires'] = '0';
+        return fetch(url, options);
+      },
     },
   });
 }

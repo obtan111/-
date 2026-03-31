@@ -122,7 +122,7 @@ export async function POST(request: NextRequest) {
 
   try {
     const body = await request.json();
-    const { address, phone, remark } = body;
+    const { address = '', phone = '', remark = '' } = body;
 
     const client = getSupabaseClient();
 
@@ -183,9 +183,9 @@ export async function POST(request: NextRequest) {
       orderItems.push({
         dish_id: dish.id,
         dish_name: dish.name,
-        price: dish.price,
+        price: parseFloat(dish.price),
         quantity: item.quantity,
-        subtotal: subtotal.toFixed(2),
+        subtotal: subtotal,
       });
     }
 
@@ -199,8 +199,9 @@ export async function POST(request: NextRequest) {
         order_no: orderNo,
         user_id: authResult.id,
         merchant_id,
-        total_price: totalPrice.toFixed(2),
+        total_price: totalPrice,
         status: 'pending',
+        payment_method: 'cash',
         address,
         phone,
         remark,
@@ -209,17 +210,36 @@ export async function POST(request: NextRequest) {
       .single();
 
     if (orderError || !order) {
+      console.error('创建订单失败:', orderError);
+      console.error('订单数据:', {
+        order_no: orderNo,
+        user_id: authResult.id,
+        merchant_id,
+        total_price: totalPrice,
+        status: 'pending',
+        payment_method: 'cash',
+        address,
+        phone,
+        remark,
+      });
       return NextResponse.json(
-        { success: false, error: '创建订单失败' },
+        { success: false, error: `创建订单失败: ${orderError?.message || '未知错误'}` },
         { status: 400 }
       );
     }
 
     // 创建订单明细
+    // 不指定id字段，让数据库自动生成
     const orderItemsWithOrderId = orderItems.map(item => ({
-      ...item,
+      dish_id: item.dish_id,
+      dish_name: item.dish_name,
+      price: item.price,
+      quantity: item.quantity,
+      subtotal: item.subtotal,
       order_id: order.id,
     }));
+
+    console.log('生成的订单明细数据:', orderItemsWithOrderId);
 
     const { error: itemsError } = await client
       .from('order_items')
@@ -228,8 +248,11 @@ export async function POST(request: NextRequest) {
     if (itemsError) {
       // 回滚订单
       await client.from('orders').delete().eq('id', order.id);
+      console.error('创建订单明细失败:', itemsError);
+      console.error('订单明细数据:', orderItemsWithOrderId);
+      console.error('错误详情:', JSON.stringify(itemsError, null, 2));
       return NextResponse.json(
-        { success: false, error: '创建订单明细失败' },
+        { success: false, error: `创建订单明细失败: ${itemsError?.message || '未知错误'}` },
         { status: 400 }
       );
     }

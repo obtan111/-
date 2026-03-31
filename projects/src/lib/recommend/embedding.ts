@@ -91,18 +91,17 @@ async function keywordBasedSearch(query: string, limit: number = 10) {
   
   // 意图映射 - 根据用户描述匹配相关菜品特征
   const intentMap: Record<string, { keywords: string[], categories: number[], priceRange?: [number, number] }> = {
-    '减脂': { keywords: ['凉拌', '清蒸', '水煮', '蔬菜', '水果', '沙拉'], categories: [2, 3, 8] },
-    '减肥': { keywords: ['凉拌', '清蒸', '水煮', '蔬菜', '水果', '汤'], categories: [2, 3, 8] },
+    '减脂': { keywords: ['凉拌', '清蒸', '水煮', '蔬菜', '水果', '沙拉'], categories: [2, 3, 7] },
+    '减肥': { keywords: ['凉拌', '清蒸', '水煮', '蔬菜', '水果', '汤'], categories: [2, 3, 7] },
     '便宜': { keywords: [], categories: [], priceRange: [0, 20] },
     '实惠': { keywords: [], categories: [], priceRange: [0, 25] },
     '辣': { keywords: ['辣', '麻辣', '酸辣', '红油'], categories: [1] },
     '辣的': { keywords: ['辣', '麻辣', '酸辣', '红油'], categories: [1] },
     '清淡': { keywords: ['清蒸', '水煮', '汤', '粥', '凉拌'], categories: [2, 3] },
-    '解渴': { keywords: ['汁', '水', '饮', '茶', '汤'], categories: [7, 3] },
-    '甜': { keywords: ['甜', '糖', '蜜', '芒果', '红豆'], categories: [6] },
-    '甜品': { keywords: [], categories: [6] },
-    '饮料': { keywords: [], categories: [7] },
-    '水果': { keywords: [], categories: [8] },
+    '解渴': { keywords: ['汁', '水', '饮', '茶', '汤'], categories: [6, 3] },
+    '甜': { keywords: ['甜', '糖', '蜜', '芒果', '红豆'], categories: [6, 7] },
+    '饮料': { keywords: [], categories: [6] },
+    '水果': { keywords: [], categories: [7] },
     '主食': { keywords: [], categories: [4] },
     '米饭': { keywords: ['饭', '炒饭'], categories: [4] },
     '面': { keywords: ['面', '粉'], categories: [4] },
@@ -339,14 +338,84 @@ export function cosineSimilarity(a: number[], b: number[]): number {
   return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
 }
 
-// 智能语义搜索菜品
+// 智能语义搜索菜品（增强版）
 export async function semanticSearchDishes(query: string, limit: number = 10) {
   try {
     console.log('语义搜索查询:', query);
     
     const client = getSupabaseClient();
     
-    // 尝试使用智谱AI生成查询向量
+    // 1. 意图分析和查询优化
+    const queryLower = query.toLowerCase();
+    
+    // 意图映射 - 更全面的用户意图理解
+    const intentMap: Record<string, { keywords: string[], categories: number[], priceRange?: [number, number], attributes?: Record<string, any> }> = {
+      '减脂': { keywords: ['凉拌', '清蒸', '水煮', '蔬菜', '水果', '沙拉'], categories: [2, 3, 7], attributes: { is_vegetarian: true } },
+      '减肥': { keywords: ['凉拌', '清蒸', '水煮', '蔬菜', '水果', '汤'], categories: [2, 3, 7], attributes: { calories: { max: 300 } } },
+      '便宜': { keywords: [], categories: [], priceRange: [0, 20] },
+      '实惠': { keywords: [], categories: [], priceRange: [0, 25] },
+      '辣': { keywords: ['辣', '麻辣', '酸辣', '红油'], categories: [1], attributes: { spiciness_level: { min: 2 } } },
+      '辣的': { keywords: ['辣', '麻辣', '酸辣', '红油'], categories: [1], attributes: { spiciness_level: { min: 2 } } },
+      '清淡': { keywords: ['清蒸', '水煮', '汤', '粥', '凉拌'], categories: [2, 3], attributes: { spiciness_level: 0 } },
+      '解渴': { keywords: ['汁', '水', '饮', '茶', '汤'], categories: [6, 3] },
+      '甜': { keywords: ['甜', '糖', '蜜', '芒果', '红豆'], categories: [6, 7] },
+      '饮料': { keywords: [], categories: [6] },
+      '水果': { keywords: [], categories: [7] },
+      '主食': { keywords: [], categories: [4] },
+      '米饭': { keywords: ['饭', '炒饭'], categories: [4] },
+      '面': { keywords: ['面', '粉'], categories: [4] },
+      '汤': { keywords: [], categories: [3] },
+      '小吃': { keywords: [], categories: [5] },
+      '热菜': { keywords: [], categories: [1] },
+      '凉菜': { keywords: [], categories: [2] },
+      '早餐': { keywords: ['粥', '包', '饺', '面', '豆浆'], categories: [4, 5] },
+      '午餐': { keywords: [], categories: [1, 4] },
+      '晚餐': { keywords: [], categories: [1, 4] },
+      '下饭': { keywords: ['辣', '麻', '香', '咸'], categories: [1] },
+      '开胃': { keywords: ['酸', '辣', '凉拌'], categories: [1, 2] },
+      '暖胃': { keywords: ['汤', '粥', '热'], categories: [1, 3] },
+      '夏天': { keywords: ['凉', '冰', '冷饮', '绿豆'], categories: [2, 7] },
+      '冬天': { keywords: ['热', '汤', '火锅', '炖'], categories: [1, 3] },
+      '素食': { keywords: ['素', '蔬菜', '豆腐'], categories: [2, 3, 7], attributes: { is_vegetarian: true } },
+      '荤菜': { keywords: ['肉', '鱼', '虾', '鸡', '牛', '羊'], categories: [1] },
+      '海鲜': { keywords: ['鱼', '虾', '蟹', '贝', '海鲜'], categories: [1] },
+      '快': { keywords: ['快', '速', '快炒', '快餐'], categories: [], attributes: { preparation_time: { max: 15 } } },
+      '慢': { keywords: ['慢', '炖', '煲', '熬'], categories: [], attributes: { preparation_time: { min: 20 } } },
+    };
+    
+    // 分析用户查询意图
+    let matchedIntents: { keywords: string[], categories: number[], priceRange?: [number, number], attributes?: Record<string, any> } = {
+      keywords: [],
+      categories: [],
+    };
+
+    for (const [intent, config] of Object.entries(intentMap)) {
+      if (queryLower.includes(intent)) {
+        matchedIntents.keywords.push(...config.keywords);
+        matchedIntents.categories.push(...config.categories);
+        if (config.priceRange) {
+          matchedIntents.priceRange = config.priceRange;
+        }
+        if (config.attributes) {
+          matchedIntents.attributes = { ...matchedIntents.attributes, ...config.attributes };
+        }
+      }
+    }
+
+    // 去重
+    matchedIntents.keywords = [...new Set(matchedIntents.keywords)];
+    matchedIntents.categories = [...new Set(matchedIntents.categories)];
+
+    // 从查询中提取其他关键词
+    const stopWords = ['我', '想', '吃', '喝', '要', '什么', '推荐', '给我', '有没有', '可以', '哪些', '呢', '吗', '的', '一下', '一点', '比较', '适合', '今天', '晚上', '中午', '早上'];
+    let additionalKeywords = queryLower.split(/\s+/).filter(word => 
+      word.length > 1 && !stopWords.includes(word) && !Object.keys(intentMap).some(k => word.includes(k))
+    );
+
+    matchedIntents.keywords.push(...additionalKeywords);
+    
+    // 2. 尝试使用智谱AI生成查询向量（增强版）
+    let vectorRecommendations: any[] = [];
     const queryEmbedding = await getZhipuEmbedding(query);
 
     if (queryEmbedding) {
@@ -365,14 +434,27 @@ export async function semanticSearchDishes(query: string, limit: number = 10) {
         }));
 
         resultsWithSimilarity.sort((a, b) => b.similarity - a.similarity);
-        const topDishIds = resultsWithSimilarity.slice(0, limit).map(r => r.dish_id);
+        const topDishIds = resultsWithSimilarity.slice(0, limit * 2).map(r => r.dish_id); // 获取更多用于筛选
 
         // 获取菜品详情
-        const { data: dishes } = await client
+        let query = client
           .from('dishes')
           .select('*')
           .in('id', topDishIds)
           .eq('is_active', true);
+
+        // 应用意图过滤
+        if (matchedIntents.categories.length > 0) {
+          query = query.in('category_id', matchedIntents.categories);
+        }
+
+        if (matchedIntents.priceRange) {
+          query = query
+            .gte('price', matchedIntents.priceRange[0])
+            .lte('price', matchedIntents.priceRange[1]);
+        }
+
+        const { data: dishes } = await query;
 
         if (dishes && dishes.length > 0) {
           const categoryIds = [...new Set(dishes.map(d => d.category_id).filter(Boolean))];
@@ -388,7 +470,7 @@ export async function semanticSearchDishes(query: string, limit: number = 10) {
           const similarityMap = new Map(resultsWithSimilarity.map(r => [r.dish_id, r.similarity]));
           const dishMap = new Map(dishes.map(d => [d.id, d]));
 
-          const results = topDishIds
+          vectorRecommendations = topDishIds
             .filter(id => dishMap.has(id))
             .map(id => {
               const dish = dishMap.get(id);
@@ -399,16 +481,27 @@ export async function semanticSearchDishes(query: string, limit: number = 10) {
               };
             });
 
-          console.log(`向量搜索完成，返回 ${results.length} 道菜品`);
-          return results;
+          console.log(`向量搜索完成，返回 ${vectorRecommendations.length} 道菜品`);
         }
       }
     }
 
-    // 使用备选的关键词搜索
-    console.log('使用关键词智能搜索');
-    return await keywordBasedSearch(query, limit);
+    // 3. 如果向量搜索结果不足，使用增强版关键词搜索
+    if (vectorRecommendations.length < limit) {
+      console.log('使用增强版关键词智能搜索');
+      const keywordResults = await keywordBasedSearch(query, limit * 2);
+      
+      // 合并结果并去重
+      const existingIds = new Set(vectorRecommendations.map(r => r.id));
+      const additionalResults = keywordResults.filter(r => !existingIds.has(r.id));
+      vectorRecommendations = [...vectorRecommendations, ...additionalResults];
+    }
 
+    // 4. 排序并返回
+    vectorRecommendations.sort((a, b) => b.similarity - a.similarity);
+    const finalResults = vectorRecommendations.slice(0, limit);
+
+    return finalResults;
   } catch (error) {
     console.error('语义搜索错误:', error);
     return await getPopularDishesSimple(limit);
@@ -468,7 +561,7 @@ export async function getSimilarDishes(dishId: number, limit: number = 5) {
   }
 }
 
-// 基于购物车内容的推荐
+// 基于购物车内容的推荐（搭配推荐）
 export async function getCartBasedRecommendations(dishIds: number[], limit: number = 6, excludeIds: number[] = []) {
   try {
     const client = getSupabaseClient();
@@ -484,18 +577,63 @@ export async function getCartBasedRecommendations(dishIds: number[], limit: numb
       return await getPopularDishesSimple(limit, excludeIds);
     }
     
-    // 分析购物车菜品的分类
+    // 分析购物车菜品的分类和特征
     const categoryIds = [...new Set(cartDishes.map(d => d.category_id).filter(Boolean))];
+    const categoryNames = new Map();
+    
+    // 获取分类名称
+    const { data: categories } = await client
+      .from('categories')
+      .select('id, name');
+    
+    if (categories) {
+      categories.forEach(cat => {
+        categoryNames.set(cat.id, cat.name);
+      });
+    }
+    
+    // 分析购物车中的菜品类型
+    const cartCategoryNames = categoryIds.map(id => categoryNames.get(id) || '').filter(Boolean);
+    const hasHotDishes = cartCategoryNames.includes('热菜');
+    const hasColdDishes = cartCategoryNames.includes('凉菜');
+    const hasDrinks = cartCategoryNames.includes('饮料');
+    const hasMainDishes = cartCategoryNames.includes('主食');
+    const hasSoup = cartCategoryNames.includes('汤品');
     
     // 合并需要排除的ID（购物车中的 + 已推荐的）
     const allExcludeIds = [...new Set([...dishIds, ...excludeIds])];
     
-    // 获取同分类的其他热门菜品
+    // 搭配推荐规则
+    const recommendedCategories: number[] = [];
+    
+    // 热菜 → 凉菜/饮料
+    if (hasHotDishes && !hasColdDishes) {
+      const coldCategory = categories?.find(cat => cat.name === '凉菜');
+      if (coldCategory) recommendedCategories.push(coldCategory.id);
+    }
+    
+    if (hasHotDishes && !hasDrinks) {
+      const drinkCategory = categories?.find(cat => cat.name === '饮料');
+      if (drinkCategory) recommendedCategories.push(drinkCategory.id);
+    }
+    
+    // 主食 → 汤品
+    if (hasMainDishes && !hasSoup) {
+      const soupCategory = categories?.find(cat => cat.name === '汤品');
+      if (soupCategory) recommendedCategories.push(soupCategory.id);
+    }
+    
+    // 如果没有明确的搭配需求，推荐同分类的其他菜品
+    if (recommendedCategories.length === 0) {
+      recommendedCategories.push(...categoryIds);
+    }
+    
+    // 获取推荐分类的菜品
     let query = client
       .from('dishes')
       .select('*')
       .eq('is_active', true)
-      .in('category_id', categoryIds)
+      .in('category_id', recommendedCategories)
       .order('sales', { ascending: false });
     
     // 排除购物车中的菜品和已推荐的菜品
@@ -503,23 +641,44 @@ export async function getCartBasedRecommendations(dishIds: number[], limit: numb
       query = query.not('id', 'in', `(${allExcludeIds.join(',')})`);
     }
     
-    const { data: similarDishes } = await query.limit(limit * 2); // 获取更多，以便后续筛选
+    const { data: recommendedDishes } = await query.limit(limit * 3); // 获取更多，以便后续筛选
     
-    if (!similarDishes || similarDishes.length === 0) {
-      return await getPopularDishesSimple(limit);
+    if (!recommendedDishes || recommendedDishes.length === 0) {
+      // 如果推荐分类没有菜品，返回热门菜品
+      return await getPopularDishesSimple(limit, allExcludeIds);
     }
     
-    // 计算推荐分数（基于分类匹配和销量）
-    const scoredDishes = similarDishes.map(dish => {
+    // 计算推荐分数（基于搭配规则和销量）
+    const scoredDishes = recommendedDishes.map(dish => {
       let score = 0;
       
-      // 同分类加分
-      if (categoryIds.includes(dish.category_id)) {
-        score += 50;
+      // 搭配规则加分
+      const dishCategoryName = categoryNames.get(dish.category_id) || '';
+      
+      if (hasHotDishes && dishCategoryName === '凉菜') {
+        score += 80; // 热菜配凉菜
+      } else if (hasHotDishes && dishCategoryName === '饮料') {
+        score += 70; // 热菜配饮料
+      } else if (hasMainDishes && dishCategoryName === '汤品') {
+        score += 75; // 主食配汤品
+      } else if (categoryIds.includes(dish.category_id)) {
+        score += 50; // 同分类推荐
       }
       
       // 销量加分
       score += (dish.sales || 0) / 10;
+      
+      // 价格平衡加分（避免价格差异过大）
+      const cartAvgPrice = cartDishes.reduce((sum, d) => sum + parseFloat(d.price), 0) / cartDishes.length;
+      const priceDiff = Math.abs(parseFloat(dish.price) - cartAvgPrice);
+      if (priceDiff < 15) score += 15;
+      else if (priceDiff < 25) score += 10;
+      else if (priceDiff < 35) score += 5;
+      
+      // 评分加分
+      if (dish.rating) {
+        score += parseFloat(dish.rating) * 3;
+      }
       
       return { ...dish, score };
     });
@@ -530,21 +689,25 @@ export async function getCartBasedRecommendations(dishIds: number[], limit: numb
     
     // 获取分类信息
     const topCategoryIds = [...new Set(topDishes.map(d => d.category_id).filter(Boolean))];
-    let categories: any[] = [];
+    let topCategories: any[] = [];
     if (topCategoryIds.length > 0) {
       const { data: cats } = await client
         .from('categories')
         .select('*')
         .in('id', topCategoryIds);
-      categories = cats || [];
+      topCategories = cats || [];
     }
-    const categoryMap = new Map(categories.map(c => [c.id, c]));
+    const categoryMap = new Map(topCategories.map(c => [c.id, c]));
     
-    return topDishes.map(dish => ({
+    const finalRecommendations = topDishes.map(dish => ({
       ...dish,
       categories: categoryMap.get(dish.category_id) || null,
-      similarity: dish.score / 100, // 归一化
+      similarity: dish.score / 150, // 归一化
     }));
+    
+    console.log(`基于购物车推荐完成: 推荐${finalRecommendations.length}道菜品，搭配规则: ${hasHotDishes ? '热菜' : ''}${hasMainDishes ? '主食' : ''} → ${recommendedCategories.map(id => categoryNames.get(id) || '').join(', ')}`);
+    
+    return finalRecommendations;
   } catch (error) {
     console.error('基于购物车推荐错误:', error);
     return await getPopularDishesSimple(limit, excludeIds);

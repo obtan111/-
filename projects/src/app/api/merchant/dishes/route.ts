@@ -38,7 +38,7 @@ export async function GET(request: NextRequest) {
 
     const { count: totalCount } = await countQuery;
 
-    // 分步查询，避免关联查询问题
+    // 不使用关联查询，先获取菜品数据
     let query = client
       .from('dishes')
       .select('*')

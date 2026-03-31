@@ -1,11 +1,32 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { getSupabaseClient } from '@/storage/database/supabase-client';
 import { hashPassword } from '@/lib/auth/auth';
+import path from 'path';
+import { readFileSync } from 'fs';
+import { fileURLToPath } from 'url';
 
 // 初始化示例数据
 export async function POST(request: NextRequest) {
   try {
     const client = getSupabaseClient();
+
+    // 获取当前文件目录
+    const __filename = fileURLToPath(import.meta.url);
+    const __dirname = path.dirname(__filename);
+    const outputPath = path.join(__dirname, '../../../../output');
+    console.log('数据文件路径:', {
+      __dirname,
+      outputPath,
+      dishesPath: path.join(outputPath, 'dishes.json'),
+      orderItemsPath: path.join(outputPath, 'order_items.json')
+    });
+    
+    // 检查文件是否存在
+    const fs = require('fs');
+    console.log('文件存在性检查:', {
+      dishesExists: fs.existsSync(path.join(outputPath, 'dishes.json')),
+      orderItemsExists: fs.existsSync(path.join(outputPath, 'order_items.json'))
+    });
 
     // 1. 创建分类
     const categories = [
@@ -13,11 +34,35 @@ export async function POST(request: NextRequest) {
       { name: '凉菜', icon: '🥗', sort_order: 2 },
       { name: '汤品', icon: '🍲', sort_order: 3 },
       { name: '主食', icon: '🍚', sort_order: 4 },
-      { name: '小吃', icon: '🥟', sort_order: 5 },
-      { name: '甜品', icon: '🍰', sort_order: 6 },
-      { name: '饮料', icon: '🥤', sort_order: 7 },
-      { name: '水果', icon: '🍎', sort_order: 8 },
+      { name: '小吃', icon: '🍢', sort_order: 5 },
+      { name: '饮料', icon: '🥤', sort_order: 6 },
+      { name: '水果', icon: '🍎', sort_order: 7 },
     ];
+
+    // 删除不在新分类列表中的旧分类（如甜品）
+    const categoryNames = categories.map(c => c.name);
+    const { data: existingCategories } = await client
+      .from('categories')
+      .select('name');
+    
+    if (existingCategories) {
+      const categoriesToDelete = existingCategories
+        .filter(c => !categoryNames.includes(c.name))
+        .map(c => c.name);
+      
+      if (categoriesToDelete.length > 0) {
+        const { error: deleteCatError } = await client
+          .from('categories')
+          .delete()
+          .in('name', categoriesToDelete);
+        
+        if (deleteCatError) {
+          console.error('删除旧分类失败:', deleteCatError);
+        } else {
+          console.log('已删除旧分类:', categoriesToDelete);
+        }
+      }
+    }
 
     const { data: insertedCategories, error: catError } = await client
       .from('categories')
@@ -63,327 +108,267 @@ export async function POST(request: NextRequest) {
       }
     }
 
-    // 3. 创建测试用户
-    const { data: existingUser } = await client
-      .from('users')
-      .select('*')
-      .eq('username', 'demo_user')
-      .single();
+    // 3. 读取生成的数据集
+    let dishesData = [];
+    let usersData = [];
+    let ordersData = [];
+    let orderItemsData = [];
 
-    if (!existingUser) {
-      const { error: userError } = await client
-        .from('users')
-        .insert({
-          username: 'demo_user',
-          email: 'user@example.com',
-          password: hashedPassword,
-          phone: '13900139000',
-          is_active: true,
-        });
+    try {
+      const dishesPath = path.join(outputPath, 'dishes.json');
+      const usersPath = path.join(outputPath, 'users.json');
+      const ordersPath = path.join(outputPath, 'orders.json');
+      const orderItemsPath = path.join(outputPath, 'order_items.json');
 
-      if (userError) {
-        console.error('创建用户失败:', userError);
+      if (require('fs').existsSync(dishesPath)) {
+        try {
+          const dishesContent = readFileSync(dishesPath, 'utf8');
+          dishesData = JSON.parse(dishesContent);
+          console.log('读取菜品数据成功:', dishesData.length, '条');
+        } catch (e) {
+          console.error('解析菜品数据失败:', e instanceof Error ? e.message : String(e));
+        }
       }
+
+      if (require('fs').existsSync(usersPath)) {
+        try {
+          const usersContent = readFileSync(usersPath, 'utf8');
+          usersData = JSON.parse(usersContent);
+          console.log('读取用户数据成功:', usersData.length, '条');
+        } catch (e) {
+          console.error('解析用户数据失败:', e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      if (require('fs').existsSync(ordersPath)) {
+        try {
+          const ordersContent = readFileSync(ordersPath, 'utf8');
+          ordersData = JSON.parse(ordersContent);
+          console.log('读取订单数据成功:', ordersData.length, '条');
+        } catch (e) {
+          console.error('解析订单数据失败:', e instanceof Error ? e.message : String(e));
+        }
+      }
+
+      if (require('fs').existsSync(orderItemsPath)) {
+        try {
+          const orderItemsContent = readFileSync(orderItemsPath, 'utf8');
+          orderItemsData = JSON.parse(orderItemsContent);
+          console.log('读取订单菜品数据成功:', orderItemsData.length, '条');
+        } catch (e) {
+          console.error('解析订单菜品数据失败:', e instanceof Error ? e.message : String(e));
+        }
+      }
+    } catch (readError) {
+      console.error('读取数据集失败:', readError);
     }
 
-    // 4. 创建丰富的示例菜品
-    if (merchant && insertedCategories && insertedCategories.length > 0) {
-      const categoryMap = new Map(insertedCategories.map(c => [c.name, c.id]));
+    // 4. 插入菜品数据（先清空现有菜品，再导入新数据）
+    let dishesInserted = 0;
+    console.log('初始化数据准备:', {
+      merchant: !!merchant,
+      dishesDataLength: dishesData.length,
+      usersDataLength: usersData.length,
+      ordersDataLength: ordersData.length,
+      orderItemsDataLength: orderItemsData.length
+    });
+    
+    if (merchant && dishesData.length > 0) {
+      // 先删除该商家的所有现有菜品
+      const { error: deleteError } = await client
+        .from('dishes')
+        .delete()
+        .eq('merchant_id', merchant.id);
       
-      const dishes = [
-        // 热菜
-        {
+      if (deleteError) {
+        console.error('删除现有菜品失败:', deleteError);
+      }
+      
+      // 批量插入新菜品（只包含数据库表中存在的字段，过滤掉id字段让数据库自动生成）
+      const dishesToInsert = dishesData.map((dish: any) => {
+        const { 
+          id, name, description, price, stock, sales, rating, review_count, 
+          is_active, category_id, created_at, updated_at
+        } = dish;
+        return {
+          name,
+          description,
+          price,
+          stock,
+          sales,
+          rating,
+          review_count,
+          is_active: true,
+          category_id,
           merchant_id: merchant.id,
-          category_id: categoryMap.get('热菜'),
-          name: '宫保鸡丁',
-          description: '经典川菜，鸡肉嫩滑，花生香脆，微辣开胃',
-          price: '38.00',
-          stock: 100,
-          sales: 258,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('热菜'),
-          name: '水煮鱼',
-          description: '鲜嫩鱼片，麻辣鲜香，回味无穷',
-          price: '68.00',
-          stock: 50,
-          sales: 186,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('热菜'),
-          name: '麻婆豆腐',
-          description: '麻辣鲜香，豆腐嫩滑，下饭必备',
-          price: '28.00',
-          stock: 80,
-          sales: 320,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('热菜'),
-          name: '红烧肉',
-          description: '肥而不腻，入口即化，传统美味',
-          price: '48.00',
-          stock: 40,
-          sales: 156,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('热菜'),
-          name: '糖醋里脊',
-          description: '外酥里嫩，酸甜可口，老少皆宜',
-          price: '42.00',
-          stock: 60,
-          sales: 198,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('热菜'),
-          name: '干锅花菜',
-          description: '香辣爽脆，下饭神器',
-          price: '26.00',
-          stock: 70,
-          sales: 245,
-        },
-        // 凉菜
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('凉菜'),
-          name: '凉拌黄瓜',
-          description: '清脆爽口，蒜香浓郁',
-          price: '18.00',
-          stock: 200,
-          sales: 320,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('凉菜'),
-          name: '皮蛋豆腐',
-          description: '滑嫩爽口，开胃解腻',
-          price: '22.00',
-          stock: 100,
-          sales: 180,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('凉菜'),
-          name: '夫妻肺片',
-          description: '麻辣鲜香，口感劲道',
-          price: '35.00',
-          stock: 50,
-          sales: 145,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('凉菜'),
-          name: '口水鸡',
-          description: '麻辣鲜香，鸡肉嫩滑',
-          price: '38.00',
-          stock: 45,
-          sales: 167,
-        },
-        // 汤品
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('汤品'),
-          name: '番茄蛋汤',
-          description: '酸甜开胃，营养丰富',
-          price: '18.00',
-          stock: 150,
-          sales: 280,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('汤品'),
-          name: '紫菜蛋花汤',
-          description: '清淡鲜美，家常美味',
-          price: '15.00',
-          stock: 180,
-          sales: 310,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('汤品'),
-          name: '酸辣汤',
-          description: '酸辣开胃，暖胃首选',
-          price: '22.00',
-          stock: 80,
-          sales: 195,
-        },
-        // 主食
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('主食'),
-          name: '扬州炒饭',
-          description: '粒粒分明，蛋香四溢',
-          price: '28.00',
-          stock: 150,
-          sales: 456,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('主食'),
-          name: '葱油拌面',
-          description: '葱香浓郁，面条劲道',
-          price: '18.00',
-          stock: 120,
-          sales: 389,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('主食'),
-          name: '蛋炒饭',
-          description: '简单美味，家常味道',
-          price: '15.00',
-          stock: 200,
-          sales: 520,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('主食'),
-          name: '酸辣粉',
-          description: '酸辣开胃，红薯粉劲道',
-          price: '22.00',
-          stock: 100,
-          sales: 278,
-        },
-        // 小吃
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('小吃'),
-          name: '煎饺',
-          description: '皮脆馅嫩，鲜香美味',
-          price: '15.00',
-          stock: 200,
-          sales: 423,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('小吃'),
-          name: '小笼包',
-          description: '皮薄馅大，汤汁鲜美',
-          price: '18.00',
-          stock: 150,
-          sales: 367,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('小吃'),
-          name: '春卷',
-          description: '外酥里嫩，香脆可口',
-          price: '12.00',
-          stock: 180,
-          sales: 298,
-        },
-        // 甜品
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('甜品'),
-          name: '芒果布丁',
-          description: '香甜细腻，入口即化',
-          price: '22.00',
-          stock: 60,
-          sales: 145,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('甜品'),
-          name: '红豆沙',
-          description: '香甜绵密，暖心暖胃',
-          price: '15.00',
-          stock: 80,
-          sales: 189,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('甜品'),
-          name: '双皮奶',
-          description: '奶香浓郁，口感细腻',
-          price: '18.00',
-          stock: 70,
-          sales: 156,
-        },
-        // 饮料
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('饮料'),
-          name: '鲜榨橙汁',
-          description: '新鲜橙子现榨，健康美味',
-          price: '15.00',
-          stock: 80,
-          sales: 189,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('饮料'),
-          name: '酸梅汤',
-          description: '酸甜解腻，夏日必备',
-          price: '8.00',
-          stock: 200,
-          sales: 456,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('饮料'),
-          name: '柠檬水',
-          description: '清新解渴，维C满满',
-          price: '10.00',
-          stock: 180,
-          sales: 378,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('饮料'),
-          name: '可乐',
-          description: '经典饮料，冰爽解渴',
-          price: '6.00',
-          stock: 300,
-          sales: 567,
-        },
-        // 水果
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('水果'),
-          name: '水果拼盘',
-          description: '多种新鲜水果，营养丰富',
-          price: '28.00',
-          stock: 50,
-          sales: 123,
-        },
-        {
-          merchant_id: merchant.id,
-          category_id: categoryMap.get('水果'),
-          name: '西瓜切块',
-          description: '新鲜西瓜，清凉解暑',
-          price: '15.00',
-          stock: 80,
-          sales: 234,
-        },
-      ];
+          created_at,
+          updated_at
+        };
+      });
+      
+      // 分批插入，每批50条
+      const batchSize = 50;
+      for (let i = 0; i < dishesToInsert.length; i += batchSize) {
+        const batch = dishesToInsert.slice(i, i + batchSize);
+        const { error: dishError } = await client
+          .from('dishes')
+          .insert(batch);
+        
+        if (!dishError) {
+          dishesInserted += batch.length;
+          console.log(`成功导入第 ${i/batchSize + 1} 批菜品，共 ${batch.length} 条`);
+        } else {
+          console.error(`批量创建菜品失败:`, dishError);
+        }
+      }
+      console.log(`菜品导入完成，共导入 ${dishesInserted} 条`);
+    }
 
-      // 批量插入菜品
-      for (const dish of dishes) {
-        if (dish.category_id) {
-          // 检查菜品是否已存在
-          const { data: existing } = await client
-            .from('dishes')
-            .select('id')
-            .eq('name', dish.name)
-            .eq('merchant_id', dish.merchant_id)
-            .single();
+    // 5. 插入用户数据
+    let usersInserted = 0;
+    if (usersData.length > 0) {
+      for (const user of usersData) {
+        // 检查用户是否已存在
+        const { data: existing } = await client
+          .from('users')
+          .select('id')
+          .eq('username', user.username)
+          .single();
 
-          if (!existing) {
-            const { error: dishError } = await client
-              .from('dishes')
-              .insert(dish);
+        if (!existing) {
+          const { error: userError } = await client
+            .from('users')
+            .insert({
+              ...user,
+              password: hashedPassword,
+              is_active: true,
+            });
 
-            if (dishError) {
-              console.error(`创建菜品失败: ${dish.name}`, dishError);
-            }
+          if (!userError) {
+            usersInserted++;
+          } else {
+            console.error(`创建用户失败: ${user.username}`, userError);
           }
         }
       }
+      console.log(`用户导入完成，共导入 ${usersInserted} 条`);
+    }
+
+    // 6. 插入订单数据（先清空再导入）
+    let ordersInserted = 0;
+    if (merchant && ordersData.length > 0) {
+      try {
+        // 先删除所有现有订单
+        const { error: deleteOrdersError } = await client
+          .from('orders')
+          .delete()
+          .eq('merchant_id', merchant.id);
+        
+        if (deleteOrdersError) {
+          console.error('删除现有订单失败:', deleteOrdersError);
+        }
+        
+        // 批量插入新订单（只包含数据库表中存在的字段，过滤掉id字段让数据库自动生成）
+        const ordersToInsert = ordersData.map((order: any) => {
+          const { 
+            id, user_id, total_amount, status, 
+            payment_method, item_count, created_at, updated_at
+          } = order;
+          // 生成订单号
+          const orderNo = `ORD${Date.now()}${Math.random().toString(36).substring(2, 8)}`.toUpperCase();
+          return {
+            order_no: orderNo,
+            user_id,
+            merchant_id: merchant.id,
+            total_price: total_amount,
+            status,
+            payment_method,
+            created_at,
+            updated_at
+          };
+        });
+        
+        // 分批插入，每批50条
+        const batchSize = 50;
+        for (let i = 0; i < ordersToInsert.length; i += batchSize) {
+          const batch = ordersToInsert.slice(i, i + batchSize);
+          const { error: orderError } = await client
+            .from('orders')
+            .insert(batch);
+          
+          if (!orderError) {
+            ordersInserted += batch.length;
+            console.log(`成功导入第 ${i/batchSize + 1} 批订单，共 ${batch.length} 条`);
+          } else {
+            console.error(`批量创建订单失败:`, orderError);
+          }
+        }
+        console.log(`订单导入完成，共导入 ${ordersInserted} 条`);
+      } catch (error) {
+        console.error('订单导入异常:', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // 7. 插入订单菜品数据（先清空再导入）
+    let orderItemsInserted = 0;
+    if (orderItemsData.length > 0) {
+      try {
+        // 先删除所有现有订单菜品
+        const { error: deleteItemsError } = await client
+          .from('order_items')
+          .delete()
+          .neq('id', 0);  // 删除所有记录
+        
+        if (deleteItemsError) {
+          console.error('删除现有订单菜品失败:', deleteItemsError);
+        } else {
+          // 重置order_items表的序列
+          try {
+            const { error: sequenceError } = await client
+              .rpc('execute_sql', {
+                sql: 'SELECT setval(\'order_items_id_seq\', 1, false);'
+              });
+            if (sequenceError) {
+              console.error('重置序列失败:', sequenceError);
+            } else {
+              console.log('序列重置成功');
+            }
+          } catch (sequenceCatchError) {
+            console.error('重置序列时出错:', sequenceCatchError);
+          }
+        }
+        
+        // 批量插入新订单菜品（过滤掉id字段，让数据库自动生成）
+        const batchSize = 50;
+        for (let i = 0; i < orderItemsData.length; i += batchSize) {
+          const batch = orderItemsData.slice(i, i + batchSize).map(item => {
+            const { id, ...itemWithoutId } = item;
+            return itemWithoutId;
+          });
+          const { error: itemError } = await client
+            .from('order_items')
+            .insert(batch);
+          
+          if (!itemError) {
+            orderItemsInserted += batch.length;
+            console.log(`成功导入第 ${i/batchSize + 1} 批订单菜品，共 ${batch.length} 条`);
+          } else {
+            console.error(`批量创建订单菜品失败:`, itemError);
+          }
+        }
+        console.log(`订单菜品导入完成，共导入 ${orderItemsInserted} 条`);
+      } catch (error) {
+        console.error('订单菜品导入异常:', error instanceof Error ? error.message : String(error));
+      }
+    }
+
+    // 8. 初始化向量嵌入
+    try {
+      const { batchGenerateDishEmbeddings } = await import('@/lib/recommend/embedding');
+      await batchGenerateDishEmbeddings();
+      console.log('向量嵌入初始化完成');
+    } catch (embeddingError) {
+      console.error('初始化向量嵌入失败:', embeddingError);
     }
 
     return NextResponse.json({
@@ -392,8 +377,13 @@ export async function POST(request: NextRequest) {
       data: {
         categories: insertedCategories?.length || 0,
         merchant: merchant ? '已就绪' : '创建失败',
-        user: '已就绪',
-        dishes: '已添加丰富菜品数据',
+        dishes: `已添加 ${dishesInserted} 道菜品`,
+        users: `已添加 ${usersInserted} 个用户`,
+        orders: `已添加 ${ordersInserted} 个订单`,
+        order_items: `已添加 ${orderItemsInserted} 个订单菜品`,
+        total_dishes: dishesData.length,
+        total_users: usersData.length,
+        total_orders: ordersData.length,
       },
     });
   } catch (error) {

@@ -9,10 +9,10 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
   try {
     const client = getSupabaseClient();
     
-    // 1. 获取用户的订单历史
+    // 1. 获取用户的订单历史（包括订单时间）
     const { data: userOrders } = await client
       .from('orders')
-      .select('id')
+      .select('id, created_at')
       .eq('user_id', userId)
       .in('status', ['completed', 'ready', 'preparing'])
       .order('created_at', { ascending: false })
@@ -24,10 +24,10 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
     
     const orderIds = userOrders.map(o => o.id);
     
-    // 2. 获取用户购买过的菜品
+    // 2. 获取用户购买过的菜品（包括购买时间和数量）
     const { data: orderItems } = await client
       .from('order_items')
-      .select('dish_id, dish_name, quantity')
+      .select('dish_id, dish_name, quantity, created_at')
       .in('order_id', orderIds);
     
     if (!orderItems || orderItems.length === 0) {
@@ -37,43 +37,90 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
     // 3. 分析用户购买数据
     const purchasedDishIds = [...new Set(orderItems.map(item => item.dish_id))];
     
+    // 获取完整的菜品信息，包括扩展属性
     const { data: purchasedDishes } = await client
       .from('dishes')
-      .select('id, category_id, name, price, description')
+      .select('id, category_id, name, price, description, spiciness_level, taste_type, cooking_method, main_ingredient, is_vegetarian, is_vegan, calories, protein, fat, carbs, price_range, preparation_time, suitable_for, seasonality, tags')
       .in('id', purchasedDishIds);
     
     if (!purchasedDishes || purchasedDishes.length === 0) {
       return null;
     }
     
-    // 统计分类偏好
+    // 4. 统计分类偏好（带时间衰减）
     const categoryPreference: Record<number, number> = {};
+    const tastePreference: Record<string, number> = {};
+    const cookingMethodPreference: Record<string, number> = {};
+    const ingredientPreference: Record<string, number> = {};
+    const pricePreferences: number[] = [];
+    
     purchasedDishes.forEach(dish => {
       if (dish.category_id) {
-        // 根据购买次数加权
-        const purchaseCount = orderItems.filter(item => item.dish_id === dish.id)
-          .reduce((sum, item) => sum + (item.quantity || 1), 0);
-        categoryPreference[dish.category_id] = (categoryPreference[dish.category_id] || 0) + purchaseCount;
+        // 根据购买次数和时间加权
+        const purchaseItems = orderItems.filter(item => item.dish_id === dish.id);
+        purchaseItems.forEach(item => {
+          // 计算时间衰减因子（最近购买的权重更高）
+          const purchaseTime = new Date(item.created_at);
+          const now = new Date();
+          const daysDiff = (now.getTime() - purchaseTime.getTime()) / (1000 * 60 * 60 * 24);
+          const timeDecay = Math.max(0.1, 1 - daysDiff / 30); // 30天内的购买权重较高
+          
+          const weight = (item.quantity || 1) * timeDecay;
+          categoryPreference[dish.category_id] = (categoryPreference[dish.category_id] || 0) + weight;
+        });
       }
+      
+      // 口味偏好
+      if (dish.taste_type) {
+        tastePreference[dish.taste_type] = (tastePreference[dish.taste_type] || 0) + 1;
+      }
+      
+      // 烹饪方式偏好
+      if (dish.cooking_method) {
+        cookingMethodPreference[dish.cooking_method] = (cookingMethodPreference[dish.cooking_method] || 0) + 1;
+      }
+      
+      // 食材偏好
+      if (dish.main_ingredient) {
+        ingredientPreference[dish.main_ingredient] = (ingredientPreference[dish.main_ingredient] || 0) + 1;
+      }
+      
+      // 价格偏好
+      pricePreferences.push(parseFloat(dish.price));
     });
     
     const preferredCategories = Object.entries(categoryPreference)
       .sort((a, b) => b[1] - a[1])
       .map(([catId]) => parseInt(catId));
     
-    // 4. 构建用户口味画像（用于向量搜索）
-    // 根据购买频率构建加权描述
+    const preferredTastes = Object.entries(tastePreference)
+      .sort((a, b) => b[1] - a[1])
+      .map(([taste]) => taste);
+    
+    // 5. 构建用户口味画像（增强版，包含更多属性）
     const userTasteProfile = purchasedDishes
       .map(dish => {
-        const purchaseCount = orderItems.filter(item => item.dish_id === dish.id)
-          .reduce((sum, item) => sum + (item.quantity || 1), 0);
-        return `${dish.name} ${dish.description || ''}`.repeat(Math.min(purchaseCount, 3));
+        const purchaseItems = orderItems.filter(item => item.dish_id === dish.id);
+        const purchaseCount = purchaseItems.reduce((sum, item) => sum + (item.quantity || 1), 0);
+        
+        // 构建详细的菜品描述，包含所有扩展属性
+        const dishDetails = [
+          dish.name,
+          dish.description || '',
+          dish.taste_type || '',
+          dish.cooking_method || '',
+          dish.main_ingredient || '',
+          ...(dish.tags || []),
+          ...(dish.suitable_for || [])
+        ].filter(Boolean).join(' ');
+        
+        return dishDetails.repeat(Math.min(purchaseCount, 3));
       })
       .join(' ');
     
-    console.log('用户口味画像:', userTasteProfile.substring(0, 100) + '...');
+    console.log('用户口味画像:', userTasteProfile.substring(0, 150) + '...');
     
-    // 5. 尝试使用向量相似度搜索
+    // 6. 尝试使用向量相似度搜索（增强版）
     let vectorRecommendations: any[] = [];
     
     try {
@@ -100,7 +147,7 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
               similarity: cosineSimilarity(userEmbedding, item.embedding as number[]),
             }))
             .sort((a, b) => b.similarity - a.similarity)
-            .slice(0, limit * 2); // 获取更多用于后续筛选
+            .slice(0, limit * 3); // 获取更多用于后续筛选
           
           if (similarities.length > 0) {
             // 获取相似菜品的详情
@@ -125,13 +172,14 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
       console.log('向量搜索失败，使用备选方案:', error);
     }
     
-    // 6. 基于偏好的分类获取候选菜品（备选方案）
+    // 7. 基于偏好的分类和特征获取候选菜品（增强版）
     let categoryRecommendations: any[] = [];
     
     // 合并所有需要排除的ID（已购买 + 已推荐 + 向量推荐结果）
     const allExcludeIds = [...new Set([...purchasedDishIds, ...excludeIds, ...vectorRecommendations.map(r => r.id)])];
     
     if (vectorRecommendations.length < limit) {
+      // 优先推荐偏好分类的菜品
       for (const categoryId of preferredCategories) {
         let query = client
           .from('dishes')
@@ -145,18 +193,40 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
           query = query.not('id', 'in', `(${allExcludeIds.join(',')})`);
         }
         
-        const { data: categoryDishes } = await query.limit(Math.ceil(limit / preferredCategories.length) + 2);
+        const { data: categoryDishes } = await query.limit(Math.ceil(limit / preferredCategories.length) + 3);
         
         if (categoryDishes) {
           categoryRecommendations.push(...categoryDishes);
         }
       }
+      
+      // 如果偏好分类不足，尝试基于口味偏好推荐
+      if (categoryRecommendations.length < limit && preferredTastes.length > 0) {
+        for (const taste of preferredTastes) {
+          let query = client
+            .from('dishes')
+            .select('*')
+            .eq('taste_type', taste)
+            .eq('is_active', true)
+            .order('sales', { ascending: false });
+          
+          if (allExcludeIds.length > 0) {
+            query = query.not('id', 'in', `(${allExcludeIds.join(',')})`);
+          }
+          
+          const { data: tasteDishes } = await query.limit(2);
+          
+          if (tasteDishes) {
+            categoryRecommendations.push(...tasteDishes);
+          }
+        }
+      }
     }
     
-    // 7. 合并两种推荐结果
+    // 8. 合并两种推荐结果
     let allRecommendations = [...vectorRecommendations, ...categoryRecommendations];
     
-    // 8. 如果推荐不足，补充热销菜品（排除所有已推荐的）
+    // 9. 如果推荐不足，补充热销菜品（排除所有已推荐的）
     if (allRecommendations.length < limit) {
       const existingIds = [...new Set([...purchasedDishIds, ...excludeIds, ...allRecommendations.map(r => r.id)])];
       let query = client
@@ -176,15 +246,15 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
       }
     }
     
-    // 9. 去重
+    // 10. 去重
     allRecommendations = allRecommendations
       .filter((dish, index, self) => 
         index === self.findIndex(d => d.id === dish.id)
       );
     
-    // 10. 智能评分（结合向量相似度、分类偏好、销量、价格）
-    const avgPurchasedPrice = purchasedDishes.reduce((sum, d) => 
-      sum + parseFloat(d.price), 0) / purchasedDishes.length;
+    // 11. 智能评分（增强版，结合更多特征）
+    const avgPurchasedPrice = pricePreferences.reduce((sum, p) => 
+      sum + p, 0) / pricePreferences.length;
     
     const scoredRecommendations = allRecommendations.map(dish => {
       let score = 0;
@@ -200,6 +270,11 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
         score += (preferredCategories.length - catRank) * 15;
       }
       
+      // 口味匹配加分
+      if (dish.taste_type && preferredTastes.includes(dish.taste_type)) {
+        score += 10;
+      }
+      
       // 销量加分
       score += (dish.sales || 0) / 10;
       
@@ -209,14 +284,19 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
       else if (priceDiff < 20) score += 7;
       else if (priceDiff < 30) score += 4;
       
+      // 评分加分
+      if (dish.rating) {
+        score += parseFloat(dish.rating) * 5;
+      }
+      
       return { ...dish, recommendation_score: score };
     });
     
-    // 11. 按分数排序并限制数量
+    // 12. 按分数排序并限制数量
     scoredRecommendations.sort((a, b) => b.recommendation_score - a.recommendation_score);
     const topRecommendations = scoredRecommendations.slice(0, limit);
     
-    // 12. 获取分类信息
+    // 13. 获取分类信息
     const categoryIds = [...new Set(topRecommendations.map(d => d.category_id).filter(Boolean))];
     let categories: any[] = [];
     if (categoryIds.length > 0) {
@@ -228,18 +308,18 @@ async function getOrderBasedRecommendations(userId: number, limit: number = 6, e
     }
     const categoryMap = new Map(categories.map(c => [c.id, c]));
     
-    // 13. 构建最终推荐结果
+    // 14. 构建最终推荐结果
     const finalRecommendations = topRecommendations.map(dish => ({
       ...dish,
       categories: categoryMap.get(dish.category_id) || null,
       // 综合相似度（向量相似度 + 评分归一化）
       similarity: dish.vector_similarity 
-        ? Math.min((dish.vector_similarity * 0.7 + (dish.recommendation_score / 100) * 0.3), 0.99)
-        : Math.min(dish.recommendation_score / 100, 0.99),
+        ? Math.min((dish.vector_similarity * 0.7 + (dish.recommendation_score / 150) * 0.3), 0.99)
+        : Math.min(dish.recommendation_score / 150, 0.99),
     }));
     
     const vectorCount = finalRecommendations.filter(r => r.vector_similarity).length;
-    console.log(`智能推荐完成: 向量推荐${vectorCount}道，分类推荐${finalRecommendations.length - vectorCount}道，偏好分类: [${preferredCategories.join(', ')}]`);
+    console.log(`基于订单历史推荐完成: 向量推荐${vectorCount}道，分类推荐${finalRecommendations.length - vectorCount}道，偏好分类: [${preferredCategories.join(', ')}]，偏好口味: [${preferredTastes.join(', ')}]`);
     
     return finalRecommendations;
   } catch (error) {
@@ -311,7 +391,9 @@ export async function GET(request: NextRequest) {
         // 基于用户订单历史的推荐 - 需要登录
         const authResultOrder = await authenticateUser(request);
         if (authResultOrder instanceof NextResponse) {
-          return authResultOrder;
+          // 用户未登录，返回热门菜品
+          recommendations = await getPopularDishesSimple(limit, excludeDishIds);
+          break;
         }
         recommendations = await getOrderBasedRecommendations(authResultOrder.id, limit, excludeDishIds);
         if (!recommendations) {
@@ -324,21 +406,22 @@ export async function GET(request: NextRequest) {
         // 基于购物车的实时推荐 - 需要登录
         const authResultCart = await authenticateUser(request);
         if (authResultCart instanceof NextResponse) {
-          return authResultCart;
+          // 用户未登录，返回热门菜品
+          recommendations = await getPopularDishesSimple(limit, excludeDishIds);
+          break;
         }
         // 获取用户购物车
-        const { data: cartData } = await getSupabaseClient()
-          .from('carts')
-          .select('items')
-          .eq('user_id', authResultCart.id)
-          .single();
+        const { data: cartItems } = await getSupabaseClient()
+          .from('cart_items')
+          .select('dish_id')
+          .eq('user_id', authResultCart.id);
         
-        if (!cartData || !cartData.items || cartData.items.length === 0) {
+        if (!cartItems || cartItems.length === 0) {
           // 购物车为空，返回热门菜品（排除已推荐的）
           recommendations = await getPopularDishesSimple(limit, excludeDishIds);
         } else {
           // 提取购物车中的菜品ID
-          const cartDishIds = cartData.items.map((item: any) => item.dish_id);
+          const cartDishIds = cartItems.map((item: any) => item.dish_id);
           // 使用基于购物车的推荐（排除已推荐的）
           recommendations = await getCartBasedRecommendations(cartDishIds, limit, excludeDishIds);
         }
@@ -364,7 +447,7 @@ export async function GET(request: NextRequest) {
         const authResult = await authenticateUser(request);
         if (authResult instanceof NextResponse) {
           // 未登录时返回热门菜品
-          recommendations = await getPopularDishesSimple(limit);
+          recommendations = await getPopularDishesSimple(limit, excludeDishIds);
         } else {
           recommendations = await hybridRecommend(authResult.id, limit);
         }

@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Order Creation Test</title>
+  <style>
+    body {
+      font-family: Arial, sans-serif;
+      margin: 20px;
+      padding: 20px;
+      border: 1px solid #ccc;
+      border-radius: 5px;
+      max-width: 600px;
+    }
+    button {
+      margin: 10px 0;
+      padding: 10px;
+      background-color: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+    }
+    button:hover {
+      background-color: #45a049;
+    }
+    .result {
+      margin-top: 20px;
+      padding: 10px;
+      border: 1px solid #ddd;
+      border-radius: 4px;
+      background-color: #f9f9f9;
+    }
+  </style>
+</head>
+<body>
+  <h1>Order Creation Test</h1>
+  <button onclick="initializeData()">1. Initialize Data</button>
+  <button onclick="loginUser()">2. Login User</button>
+  <button onclick="addItemToCart()">3. Add Item to Cart</button>
+  <button onclick="createOrder()">4. Create Order</button>
+  <button onclick="clearCart()">5. Clear Cart</button>
+  
+  <div class="result" id="result"></div>
+  
+  <script>
+    const BASE_URL = 'http://localhost:3000';
+    let token = '';
+    
+    function log(message) {
+      const resultDiv = document.getElementById('result');
+      resultDiv.innerHTML += '<p>' + message + '</p>';
+      console.log(message);
+    }
+    
+    async function initializeData() {
+      log('Initializing data...');
+      try {
+        const response = await fetch(`${BASE_URL}/api/init`, {
+          method: 'POST'
+        });
+        const data = await response.json();
+        log('Data initialization response: ' + JSON.stringify(data));
+        log('Data initialization successful!');
+      } catch (error) {
+        log('Data initialization failed: ' + error.message);
+      }
+    }
+    
+    async function loginUser() {
+      log('Logging in user...');
+      try {
+        const response = await fetch(`${BASE_URL}/api/user/login`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json'
+          },
+          body: JSON.stringify({
+            username: 'user1',
+            password: '123456'
+          })
+        });
+        const data = await response.json();
+        log('Login response: ' + JSON.stringify(data));
+        if (data.success) {
+          token = data.data.token;
+          log('Login successful, obtained token: ' + token.substring(0, 20) + '...');
+        } else {
+          log('Login failed: ' + data.error);
+        }
+      } catch (error) {
+        log('Login failed: ' + error.message);
+      }
+    }
+    
+    async function addItemToCart() {
+      log('Adding item to cart...');
+      try {
+        const response = await fetch(`${BASE_URL}/api/cart`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({
+            dish_id: 1,
+            quantity: 1
+          })
+        });
+        const data = await response.json();
+        log('Add to cart response: ' + JSON.stringify(data));
+        log('Add item to cart successful');
+      } catch (error) {
+        log('Add item to cart failed: ' + error.message);
+      }
+    }
+    
+    async function createOrder() {
+      log('Creating order...');
+      try {
+        const response = await fetch(`${BASE_URL}/api/orders`, {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': 'Bearer ' + token
+          },
+          body: JSON.stringify({
+            address: 'Test address',
+            phone: '13800138000',
+            remark: 'Test order'
+          })
+        });
+        const data = await response.json();
+        log('Create order response: ' + JSON.stringify(data));
+        if (data.success) {
+          log('Create order successful');
+        } else {
+          log('Create order failed: ' + data.error);
+        }
+      } catch (error) {
+        log('Create order failed: ' + error.message);
+      }
+    }
+    
+    async function clearCart() {
+      log('Clearing cart...');
+      try {
+        const response = await fetch(`${BASE_URL}/api/cart`, {
+          method: 'DELETE',
+          headers: {
+            'Authorization': 'Bearer ' + token
+          }
+        });
+        const data = await response.json();
+        log('Clear cart response: ' + JSON.stringify(data));
+        log('Clear cart successful');
+      } catch (error) {
+        log('Clear cart failed: ' + error.message);
+      }
+    }
+  </script>
+</body>
+</html>

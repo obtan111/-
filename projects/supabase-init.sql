@@ -93,6 +93,7 @@ CREATE TABLE IF NOT EXISTS orders (
   merchant_id INTEGER NOT NULL,
   total_price DECIMAL(10, 2) NOT NULL,
   status VARCHAR(20) DEFAULT 'pending' NOT NULL,
+  order_type VARCHAR(20) DEFAULT 'dine_in',
   payment_method VARCHAR(20),
   paid_at TIMESTAMP WITH TIME ZONE,
   completed_at TIMESTAMP WITH TIME ZONE,
