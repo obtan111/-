@@ -407,68 +407,244 @@ const fetchDishes = async (signal?: AbortSignal) => {
 
 ## 📊 数据结构
 
-### 主要数据表
+### Supabase 表功能介绍
 
-1. **dishes** - 菜品表
-   - id: 菜品ID
-   - name: 菜品名称
-   - description: 菜品描述
-   - price: 价格
-   - stock: 库存
-   - category_id: 分类ID
-   - image: 图片URL
-   - is_active: 是否上架
+#### 1. **dishes** - 菜品表
+**功能**：存储所有菜品信息，是系统的核心数据表之一
+**关键字段**：
+- id: 菜品ID（主键）
+- name: 菜品名称
+- description: 菜品描述
+- price: 价格（精确到小数点后两位）
+- stock: 库存数量
+- category_id: 分类ID（外键，关联categories表）
+- image: 图片URL
+- sales: 销量
+- rating: 评分
+- review_count: 评价数量
+- is_active: 是否上架
+**使用场景**：
+- 展示菜品列表
+- 智能搜索推荐
+- 购物车添加
+- 订单创建
+**查询示例**：
+```sql
+-- 获取热门菜品
+SELECT * FROM dishes WHERE is_active = true ORDER BY sales DESC LIMIT 10;
 
-2. **categories** - 分类表
-   - id: 分类ID
-   - name: 分类名称
-   - icon: 分类图标
-   - sort_order: 排序顺序
+-- 根据分类获取菜品
+SELECT * FROM dishes WHERE category_id = 1 AND is_active = true;
+```
 
-3. **orders** - 订单表
-   - id: 订单ID
-   - order_no: 订单编号
-   - user_id: 用户ID
-   - merchant_id: 商家ID
-   - total_price: 总价格
-   - status: 订单状态
-   - order_type: 订单类型（dine_in, takeaway, delivery）
-   - payment_method: 支付方式
-   - created_at: 创建时间
+#### 2. **categories** - 分类表
+**功能**：存储菜品分类信息，用于菜品的分类管理
+**关键字段**：
+- id: 分类ID（主键）
+- name: 分类名称
+- icon: 分类图标（emoji）
+- sort_order: 排序顺序
+- is_active: 是否激活
+**使用场景**：
+- 菜品分类展示
+- 分类筛选
+- 商家分类管理
+**查询示例**：
+```sql
+-- 获取所有激活的分类
+SELECT * FROM categories WHERE is_active = true ORDER BY sort_order;
+```
 
-4. **order_items** - 订单详情表
-   - id: 详情ID
-   - order_id: 订单ID
-   - dish_id: 菜品ID
-   - dish_name: 菜品名称
-   - price: 单价
-   - quantity: 数量
-   - subtotal: 小计
+#### 3. **orders** - 订单表
+**功能**：存储用户订单信息，跟踪订单生命周期
+**关键字段**：
+- id: 订单ID（主键）
+- order_no: 订单编号（唯一）
+- user_id: 用户ID（外键，关联users表）
+- merchant_id: 商家ID（外键，关联merchants表）
+- total_price: 总价格
+- status: 订单状态（pending, paid, preparing, ready, completed, cancelled, refunded）
+- order_type: 订单类型（dine_in, takeaway, delivery）
+- payment_method: 支付方式
+- address: 配送地址
+- phone: 联系电话
+- remark: 订单备注
+**使用场景**：
+- 用户订单管理
+- 商家订单处理
+- 销售统计
+**查询示例**：
+```sql
+-- 获取用户的所有订单
+SELECT * FROM orders WHERE user_id = 1 ORDER BY created_at DESC;
 
-5. **users** - 用户表
-   - id: 用户ID
-   - username: 用户名
-   - password: 密码
-   - email: 邮箱
-   - phone: 电话
-   - avatar: 头像
-   - real_name: 真实姓名
-   - address: 地址
-   - is_active: 是否激活
+-- 获取商家的待处理订单
+SELECT * FROM orders WHERE merchant_id = 1 AND status = 'pending';
+```
 
-6. **merchants** - 商家表
-   - id: 商家ID
-   - username: 用户名
-   - password: 密码
-   - shop_name: 店铺名称
-   - email: 邮箱
-   - phone: 电话
-   - address: 地址
-   - logo: 店铺logo
-   - description: 店铺描述
-   - rating: 评分
-   - total_sales: 总销售额
-   - is_active: 是否激活
+#### 4. **order_items** - 订单详情表
+**功能**：存储订单中的菜品详情，是orders表的子表
+**关键字段**：
+- id: 详情ID（主键）
+- order_id: 订单ID（外键，关联orders表）
+- dish_id: 菜品ID（外键，关联dishes表）
+- dish_name: 菜品名称（冗余存储，确保订单数据一致性）
+- price: 单价
+- quantity: 数量
+- subtotal: 小计
+**使用场景**：
+- 订单详情展示
+- 菜品销售统计
+- 库存扣减
+**查询示例**：
+```sql
+-- 获取订单的所有菜品
+SELECT * FROM order_items WHERE order_id = 1;
+```
+
+#### 5. **users** - 用户表
+**功能**：存储用户信息，支持用户认证和个人中心
+**关键字段**：
+- id: 用户ID（主键）
+- username: 用户名
+- password: 密码（加密存储）
+- email: 邮箱
+- phone: 电话
+- avatar: 头像URL
+- real_name: 真实姓名
+- address: 地址
+- is_active: 是否激活
+**使用场景**：
+- 用户登录认证
+- 个人信息管理
+- 订单关联
+**查询示例**：
+```sql
+-- 根据用户名查找用户
+SELECT * FROM users WHERE username = 'user1';
+```
+
+#### 6. **merchants** - 商家表
+**功能**：存储商家信息，支持商家认证和店铺管理
+**关键字段**：
+- id: 商家ID（主键）
+- username: 用户名
+- password: 密码（加密存储）
+- shop_name: 店铺名称
+- email: 邮箱
+- phone: 电话
+- address: 地址
+- logo: 店铺logo
+- description: 店铺描述
+- rating: 店铺评分
+- total_sales: 总销售额
+- is_active: 是否激活
+**使用场景**：
+- 商家登录认证
+- 店铺信息管理
+- 订单关联
+**查询示例**：
+```sql
+-- 获取商家信息
+SELECT * FROM merchants WHERE id = 1;
+```
+
+#### 7. **cart_items** - 购物车表
+**功能**：存储用户购物车中的菜品信息
+**关键字段**：
+- id: 购物车项ID（主键）
+- user_id: 用户ID（外键，关联users表）
+- dish_id: 菜品ID（外键，关联dishes表）
+- merchant_id: 商家ID（外键，关联merchants表）
+- quantity: 数量
+**使用场景**：
+- 购物车管理
+- 订单创建
+- 搭配推荐
+**查询示例**：
+```sql
+-- 获取用户的购物车
+SELECT * FROM cart_items WHERE user_id = 1;
+```
+
+#### 8. **dish_embeddings** - 菜品向量表
+**功能**：存储菜品的向量嵌入数据，用于智能语义搜索
+**关键字段**：
+- id: 嵌入ID（主键）
+- dish_id: 菜品ID（外键，关联dishes表）
+- embedding: 向量数据（JSON格式）
+- embedding_model: 使用的模型
+- updated_at: 更新时间
+**使用场景**：
+- 语义搜索推荐
+- 相似菜品推荐
+**查询示例**：
+```sql
+-- 获取菜品的向量数据
+SELECT * FROM dish_embeddings WHERE dish_id = 1;
+```
+
+#### 9. **reviews** - 评价表
+**功能**：存储用户对菜品的评价
+**关键字段**：
+- id: 评价ID（主键）
+- user_id: 用户ID（外键，关联users表）
+- dish_id: 菜品ID（外键，关联dishes表）
+- rating: 评分
+- comment: 评论内容
+- created_at: 创建时间
+**使用场景**：
+- 菜品评价展示
+- 商家菜品质量分析
+**查询示例**：
+```sql
+-- 获取菜品的所有评价
+SELECT * FROM reviews WHERE dish_id = 1 ORDER BY created_at DESC;
+```
+
+#### 10. **user_behaviors** - 用户行为表
+**功能**：存储用户的行为数据，用于个性化推荐
+**关键字段**：
+- id: 行为ID（主键）
+- user_id: 用户ID（外键，关联users表）
+- dish_id: 菜品ID（外键，关联dishes表）
+- behavior_type: 行为类型（view, add_to_cart, order, review）
+- created_at: 创建时间
+**使用场景**：
+- 个性化推荐
+- 用户行为分析
+- 热门菜品计算
+**查询示例**：
+```sql
+-- 获取用户的浏览记录
+SELECT * FROM user_behaviors WHERE user_id = 1 AND behavior_type = 'view' ORDER BY created_at DESC;
+```
+
+### 表关系图
+
+```
+┌───────────┐     ┌─────────────┐     ┌───────────┐
+│  users    │────▶│  cart_items │◀────│  dishes   │
+└───────────┘     └─────────────┘     └───────────┘
+       ▲                 ▲                 ▲
+       │                 │                 │
+       ▼                 │                 │
+┌───────────┐     ┌─────────────┐     ┌───────────────┐
+│  orders   │◀────│ order_items │◀────│ dish_embeddings │
+└───────────┘     └─────────────┘     └───────────────┘
+       ▲                 ▲                 ▲
+       │                 │                 │
+       ▼                 │                 │
+┌───────────┐     ┌─────────────┐     ┌───────────────┐
+│ merchants │     │  categories │     │   reviews     │
+└───────────┘     └─────────────┘     └───────────────┘
+       ▲                 ▲                 ▲
+       │                 │                 │
+       ▼                 │                 │
+┌────────────────┐        │                 │
+│ user_behaviors │────────┘─────────────────┘
+└────────────────┘
+```
 
 ## 🎯 技术亮点
 
